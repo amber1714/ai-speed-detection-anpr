@@ -6,3 +6,4 @@ streamlit
 easyocr
 torch
 torchvision
+lap>=0.5.12
