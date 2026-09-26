@@ -1,113 +1,187 @@
-import cv2
+from functools import lru_cache
+
+from huggingface_hub import hf_hub_download
+from ultralytics import YOLO
+
+
+MODEL_REPO = "ml-debi/yolov8-license-plate-detection"
+MODEL_FILE = "best.onnx"
+
+
+@lru_cache(maxsize=1)
+def get_plate_model():
+    """
+    Download and load the pretrained license-plate YOLO model.
+
+    The model is downloaded only once and then cached.
+    """
+
+    model_path = hf_hub_download(
+        repo_id=MODEL_REPO,
+        filename=MODEL_FILE,
+    )
+
+    model = YOLO(
+        model_path,
+        task="detect",
+    )
+
+    return model
 
 
 def find_plate_candidates(vehicle_image):
-    if vehicle_image is None or vehicle_image.size == 0:
+    """
+    Detect license plates inside a vehicle image.
+
+    Returns:
+        [
+            (
+                plate_crop,
+                (x, y, width, height)
+            )
+        ]
+    """
+
+    if (
+        vehicle_image is None
+        or vehicle_image.size == 0
+    ):
         return []
 
-    height, width = vehicle_image.shape[:2]
-    vehicle_area = width * height
+    model = get_plate_model()
 
-    if vehicle_area == 0:
-        return []
-
-    gray = cv2.cvtColor(
-        vehicle_image,
-        cv2.COLOR_BGR2GRAY,
+    results = model.predict(
+        source=vehicle_image,
+        conf=0.25,
+        imgsz=640,
+        verbose=False,
     )
-
-    blurred = cv2.bilateralFilter(
-        gray,
-        11,
-        17,
-        17,
-    )
-
-    edges = cv2.Canny(
-        blurred,
-        30,
-        200,
-    )
-
-    kernel = cv2.getStructuringElement(
-        cv2.MORPH_RECT,
-        (5, 3),
-    )
-
-    edges = cv2.morphologyEx(
-        edges,
-        cv2.MORPH_CLOSE,
-        kernel,
-    )
-
-    contours, _ = cv2.findContours(
-        edges,
-        cv2.RETR_TREE,
-        cv2.CHAIN_APPROX_SIMPLE,
-    )
-
-    contours = sorted(
-        contours,
-        key=cv2.contourArea,
-        reverse=True,
-    )[:80]
 
     candidates = []
 
-    for contour in contours:
-        perimeter = cv2.arcLength(
-            contour,
-            True,
+    if not results:
+        return candidates
+
+    result = results[0]
+
+    if result.boxes is None:
+        return candidates
+
+    image_height, image_width = vehicle_image.shape[:2]
+
+    detections = []
+
+    for box in result.boxes:
+        coordinates = box.xyxy[0].tolist()
+
+        x1, y1, x2, y2 = map(
+            int,
+            coordinates,
         )
 
-        if perimeter == 0:
-            continue
-
-        approx = cv2.approxPolyDP(
-            contour,
-            0.02 * perimeter,
-            True,
+        confidence = float(
+            box.conf[0]
         )
 
-        if len(approx) != 4:
-            continue
-
-        x, y, w, h = cv2.boundingRect(
-            approx
+        x1 = max(
+            0,
+            min(x1, image_width - 1),
         )
 
-        if w <= 0 or h <= 0:
-            continue
+        y1 = max(
+            0,
+            min(y1, image_height - 1),
+        )
 
-        aspect_ratio = w / h
-        plate_area = w * h
-        area_ratio = plate_area / vehicle_area
+        x2 = max(
+            0,
+            min(x2, image_width),
+        )
+
+        y2 = max(
+            0,
+            min(y2, image_height),
+        )
 
         if (
-            1.8 <= aspect_ratio <= 7.0
-            and 0.002 <= area_ratio <= 0.30
+            x2 <= x1
+            or y2 <= y1
         ):
-            plate_crop = vehicle_image[
-                y:y + h,
-                x:x + w,
-            ]
+            continue
 
-            if plate_crop.size == 0:
-                continue
+        # Add a small margin around the plate.
+        plate_width = x2 - x1
+        plate_height = y2 - y1
 
-            candidates.append(
+        padding_x = int(
+            plate_width * 0.05
+        )
+
+        padding_y = int(
+            plate_height * 0.10
+        )
+
+        crop_x1 = max(
+            0,
+            x1 - padding_x,
+        )
+
+        crop_y1 = max(
+            0,
+            y1 - padding_y,
+        )
+
+        crop_x2 = min(
+            image_width,
+            x2 + padding_x,
+        )
+
+        crop_y2 = min(
+            image_height,
+            y2 + padding_y,
+        )
+
+        plate_crop = vehicle_image[
+            crop_y1:crop_y2,
+            crop_x1:crop_x2,
+        ]
+
+        if plate_crop.size == 0:
+            continue
+
+        width = crop_x2 - crop_x1
+        height = crop_y2 - crop_y1
+
+        detections.append(
+            (
+                confidence,
+                plate_crop,
                 (
-                    plate_crop,
-                    (x, y, w, h),
-                )
+                    crop_x1,
+                    crop_y1,
+                    width,
+                    height,
+                ),
             )
+        )
 
-    candidates.sort(
-        key=lambda item: (
-            item[1][2]
-            * item[1][3]
-        ),
+    # Highest-confidence detection first.
+    detections.sort(
+        key=lambda item: item[0],
         reverse=True,
     )
+
+    for (
+        confidence,
+        plate_crop,
+        bounding_box,
+    ) in detections:
+
+        candidates.append(
+            (
+                plate_crop,
+                bounding_box,
+            )
+        )
 
     return candidates

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import cv2
 import easyocr
+
 from src.plate_detector import find_plate_candidates
 
 
@@ -52,7 +53,6 @@ def normalize_indian_plate(text):
     Correct common OCR mistakes in Indian number plates.
 
     Example:
-
     KAOIMN1234
     becomes
     KA01MN1234
@@ -89,7 +89,6 @@ def normalize_indian_plate(text):
     # Indian registration structure
     #
     # Example:
-    #
     # KA01MN1234
     #
     # KA = State code
@@ -103,7 +102,6 @@ def normalize_indian_plate(text):
         0,
         min(2, len(characters)),
     ):
-
         characters[i] = letter_replacements.get(
             characters[i],
             characters[i],
@@ -114,7 +112,6 @@ def normalize_indian_plate(text):
         2,
         min(4, len(characters)),
     ):
-
         characters[i] = digit_replacements.get(
             characters[i],
             characters[i],
@@ -130,7 +127,6 @@ def normalize_indian_plate(text):
         start_last_digits,
         len(characters),
     ):
-
         characters[i] = digit_replacements.get(
             characters[i],
             characters[i],
@@ -141,7 +137,6 @@ def normalize_indian_plate(text):
         4,
         start_last_digits,
     ):
-
         characters[i] = letter_replacements.get(
             characters[i],
             characters[i],
@@ -163,7 +158,6 @@ def is_possible_indian_plate(text):
     Basic validation of Indian registration numbers.
 
     Examples:
-
     KA01MN1234
     TN38CD5678
     GA08A1234
@@ -171,9 +165,7 @@ def is_possible_indian_plate(text):
     """
 
     patterns = [
-
-        # Example:
-        # KA01MN1234
+        # Standard format
         r"^[A-Z]{2}[0-9]{2}[A-Z]{1,3}[0-9]{4}$",
 
         # Some registrations may contain
@@ -182,12 +174,10 @@ def is_possible_indian_plate(text):
     ]
 
     for pattern in patterns:
-
         if re.match(
             pattern,
             text,
         ):
-
             return True
 
     return False
@@ -207,7 +197,6 @@ def preprocess_plate(image):
         image is None
         or image.size == 0
     ):
-
         return None
 
     # Make plate larger
@@ -233,7 +222,7 @@ def preprocess_plate(image):
         17,
     )
 
-    # Improve image contrast
+    # Improve contrast
     clahe = cv2.createCLAHE(
         clipLimit=2.0,
         tileGridSize=(8, 8),
@@ -255,9 +244,8 @@ def read_number_plate(plate_image):
     Read the number plate text using EasyOCR.
 
     Returns:
-
-    plate_text
-    confidence
+        plate_text
+        confidence
     """
 
     processed = preprocess_plate(
@@ -265,7 +253,6 @@ def read_number_plate(plate_image):
     )
 
     if processed is None:
-
         return None, 0.0
 
     results = reader.readtext(
@@ -296,65 +283,65 @@ def read_number_plate(plate_image):
         )
 
         if len(corrected_text) < 6:
-
             continue
 
-        adjusted_confidence = confidence
+        # Convert NumPy value to normal Python float
+        adjusted_confidence = float(
+            confidence
+        )
 
-        # Give extra preference if the text
-        # matches an Indian plate format
+        # Give preference to text matching
+        # an Indian registration format
         if is_possible_indian_plate(
             corrected_text
         ):
-
-            adjusted_confidence += 0.20
+            adjusted_confidence = min(
+                adjusted_confidence + 0.20,
+                1.0,
+            )
 
         if (
             adjusted_confidence
             > best_confidence
         ):
-
             best_text = corrected_text
 
-            best_confidence = (
+            best_confidence = float(
                 adjusted_confidence
             )
 
     return (
         best_text,
-        best_confidence,
+        round(
+            float(best_confidence),
+            4,
+        ),
     )
 
 
 # ---------------------------------------------------------
-# FIND POSSIBLE NUMBER PLATE REGIONS
+# DETECT AND READ NUMBER PLATE
 # ---------------------------------------------------------
-
 
 def detect_and_read_plate(
     vehicle_image,
 ):
     """
-    Detect possible number plates
-    and read them using OCR.
+    Detect number plates using the YOLO plate detector
+    and read the plate using EasyOCR.
 
     Returns:
-
-    plate_text
-    confidence
-    plate_bbox
+        plate_text
+        confidence
+        plate_bbox
     """
 
-    candidates = (
-        find_plate_candidates(
-            vehicle_image
-        )
+    candidates = find_plate_candidates(
+        vehicle_image
     )
 
     best_plate = None
-
     best_confidence = 0.0
-
     best_bbox = None
 
     for (
@@ -362,32 +349,29 @@ def detect_and_read_plate(
         bbox,
     ) in candidates:
 
-        text, confidence = (
-            read_number_plate(
-                plate_crop
-            )
+        text, confidence = read_number_plate(
+            plate_crop
         )
 
         if text is None:
-
             continue
 
         if (
             confidence
             > best_confidence
         ):
-
             best_plate = text
-
-            best_confidence = (
+            best_confidence = float(
                 confidence
             )
-
             best_bbox = bbox
 
     return (
         best_plate,
-        best_confidence,
+        round(
+            float(best_confidence),
+            4,
+        ),
         best_bbox,
     )
 
@@ -398,11 +382,11 @@ def detect_and_read_plate(
 
 def test_plate_reader():
     """
-    Put your test image here:
+    Test image:
 
     data/input/plate_test.jpg
 
-    Then run:
+    Run:
 
     python src/plate_reader.py
     """
@@ -527,5 +511,4 @@ def test_plate_reader():
 # ---------------------------------------------------------
 
 if __name__ == "__main__":
-
     test_plate_reader()

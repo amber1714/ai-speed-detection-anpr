@@ -7,3 +7,5 @@ easyocr
 torch
 torchvision
 lap>=0.5.12
+huggingface_hub
+onnxruntime
