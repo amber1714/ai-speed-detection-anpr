@@ -7,10 +7,6 @@ import pandas as pd
 import streamlit as st
 
 
-# =========================================================
-# PROJECT PATH SETUP
-# =========================================================
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 if str(PROJECT_ROOT) not in sys.path:
@@ -19,24 +15,14 @@ if str(PROJECT_ROOT) not in sys.path:
         str(PROJECT_ROOT),
     )
 
-
-# Import AFTER adding project root
 from src.web_pipeline import process_video
 
-
-# =========================================================
-# PAGE CONFIGURATION
-# =========================================================
 
 st.set_page_config(
     page_title="AI Speed Detection and ANPR",
     layout="wide",
 )
 
-
-# =========================================================
-# PROJECT DIRECTORIES
-# =========================================================
 
 INPUT_DIR = (
     PROJECT_ROOT
@@ -71,10 +57,6 @@ VIOLATION_DIR.mkdir(
 )
 
 
-# =========================================================
-# SESSION STATE
-# =========================================================
-
 if "processed_data" not in st.session_state:
     st.session_state.processed_data = None
 
@@ -85,10 +67,6 @@ if "processed_video" not in st.session_state:
     st.session_state.processed_video = None
 
 
-# =========================================================
-# HEADER
-# =========================================================
-
 st.title(
     "AI-Based Speed Detection and Number Plate Recognition"
 )
@@ -96,7 +74,7 @@ st.title(
 st.write(
     """
     Upload a traffic video to detect and track vehicles,
-    estimate their speed, recognize number plates,
+    estimate speed, recognize registration plates,
     and identify overspeed violations.
     """
 )
@@ -132,6 +110,75 @@ with st.sidebar:
 
     st.divider()
 
+    st.header(
+        "Speed Line Positions"
+    )
+
+    st.caption(
+        "Move these sliders so the speed lines "
+        "cross the actual traffic path."
+    )
+
+    horizontal_line_a = st.slider(
+        "Horizontal Line A (% height)",
+        min_value=5,
+        max_value=90,
+        value=45,
+        step=1,
+    )
+
+    horizontal_line_b = st.slider(
+        "Horizontal Line B (% height)",
+        min_value=10,
+        max_value=95,
+        value=60,
+        step=1,
+    )
+
+    vertical_line_a = st.slider(
+        "Vertical Line A (% width)",
+        min_value=5,
+        max_value=90,
+        value=40,
+        step=1,
+    )
+
+    vertical_line_b = st.slider(
+        "Vertical Line B (% width)",
+        min_value=10,
+        max_value=95,
+        value=60,
+        step=1,
+    )
+
+    valid_lines = True
+
+    if (
+        horizontal_line_a
+        >= horizontal_line_b
+    ):
+
+        st.error(
+            "Horizontal Line A must be "
+            "before Horizontal Line B."
+        )
+
+        valid_lines = False
+
+    if (
+        vertical_line_a
+        >= vertical_line_b
+    ):
+
+        st.error(
+            "Vertical Line A must be "
+            "before Vertical Line B."
+        )
+
+        valid_lines = False
+
+    st.divider()
+
     st.subheader(
         "Technology"
     )
@@ -145,7 +192,7 @@ with st.sidebar:
     )
 
     st.write(
-        "License Plate Detection: YOLO"
+        "Plate Detection: YOLO"
     )
 
     st.write(
@@ -163,8 +210,8 @@ with st.sidebar:
     st.divider()
 
     st.caption(
-        "Speed values depend on the calibrated "
-        "distance between the two virtual lines."
+        "Speed values remain estimates until "
+        "the physical road distance is calibrated."
     )
 
 
@@ -233,6 +280,7 @@ if uploaded_video is not None:
         "Process Traffic Video",
         type="primary",
         use_container_width=True,
+        disabled=not valid_lines,
     )
 
     if process_button:
@@ -269,18 +317,47 @@ if uploaded_video is not None:
             ):
 
                 dataframe, summary = process_video(
+
                     input_video=(
                         input_video_path
                     ),
+
                     output_video=(
                         output_video_path
                     ),
+
                     calibrated_distance_meters=(
                         calibrated_distance
                     ),
+
                     speed_limit_kmph=(
                         speed_limit
                     ),
+
+                    horizontal_line_a_pct=(
+                        float(
+                            horizontal_line_a
+                        )
+                    ),
+
+                    horizontal_line_b_pct=(
+                        float(
+                            horizontal_line_b
+                        )
+                    ),
+
+                    vertical_line_a_pct=(
+                        float(
+                            vertical_line_a
+                        )
+                    ),
+
+                    vertical_line_b_pct=(
+                        float(
+                            vertical_line_b
+                        )
+                    ),
+
                     progress_callback=(
                         update_progress
                     ),
@@ -342,10 +419,6 @@ if (
         "Detection Results"
     )
 
-    # =====================================================
-    # METRICS
-    # =====================================================
-
     col1, col2, col3, col4, col5 = (
         st.columns(
             5
@@ -403,9 +476,79 @@ if (
         )
 
     st.caption(
-        "Tracked Vehicles = vehicles detected by YOLO + ByteTrack. "
-        "Measured Vehicles = vehicles that crossed both speed lines."
+        "Tracked Vehicles = unique YOLO + ByteTrack IDs. "
+        "Measured Vehicles = vehicles that successfully "
+        "crossed one complete speed-line pair."
     )
+
+
+    # =====================================================
+    # MEASUREMENT DIRECTION
+    # =====================================================
+
+    st.subheader(
+        "Speed Measurement Direction"
+    )
+
+    direction_col1, direction_col2 = (
+        st.columns(
+            2
+        )
+    )
+
+    with direction_col1:
+
+        st.metric(
+            "Vertical-Traffic Measurements",
+            summary.get(
+                "vertical_measurements",
+                0,
+            ),
+        )
+
+    with direction_col2:
+
+        st.metric(
+            "Horizontal-Traffic Measurements",
+            summary.get(
+                "horizontal_measurements",
+                0,
+            ),
+        )
+
+    st.caption(
+        "Vertical traffic crosses the horizontal lines. "
+        "Horizontal traffic crosses the vertical lines."
+    )
+
+
+    # =====================================================
+    # LINE SETTINGS USED
+    # =====================================================
+
+    with st.expander(
+        "Speed Line Configuration Used"
+    ):
+
+        st.write(
+            "Horizontal Line A:",
+            f"{summary.get('horizontal_line_a_pct', 0):.0f}%",
+        )
+
+        st.write(
+            "Horizontal Line B:",
+            f"{summary.get('horizontal_line_b_pct', 0):.0f}%",
+        )
+
+        st.write(
+            "Vertical Line A:",
+            f"{summary.get('vertical_line_a_pct', 0):.0f}%",
+        )
+
+        st.write(
+            "Vertical Line B:",
+            f"{summary.get('vertical_line_b_pct', 0):.0f}%",
+        )
 
 
     # =====================================================
@@ -455,7 +598,7 @@ if (
     else:
 
         st.warning(
-            "Processed video is unavailable."
+            "Processed video unavailable."
         )
 
 
@@ -482,6 +625,7 @@ if (
         display_columns = [
             "vehicle_id",
             "number_plate",
+            "movement_direction",
             "speed_kmph",
             "speed_limit_kmph",
             "timestamp",
@@ -506,33 +650,10 @@ if (
 
     else:
 
-        tracked_count = summary.get(
-            "tracked_vehicles",
-            0,
+        st.info(
+            "No completed speed measurements "
+            "were recorded."
         )
-
-        measured_count = summary.get(
-            "measured_vehicles",
-            0,
-        )
-
-        if (
-            tracked_count > 0
-            and measured_count == 0
-        ):
-
-            st.info(
-                "Vehicles were detected and tracked, "
-                "but none completed the two-line "
-                "speed measurement."
-            )
-
-        else:
-
-            st.info(
-                "No completed vehicle measurements "
-                "were recorded."
-            )
 
 
     st.divider()
@@ -585,7 +706,7 @@ if (
 
 
     # =====================================================
-    # OVERSPEED VIOLATIONS
+    # OVERSPEED
     # =====================================================
 
     st.subheader(
@@ -613,9 +734,7 @@ if (
             ]
         )
 
-        if (
-            overspeed_data.empty
-        ):
+        if overspeed_data.empty:
 
             st.success(
                 "No overspeed violations detected."
@@ -623,88 +742,11 @@ if (
 
         else:
 
-            for _, row in (
-                overspeed_data.iterrows()
-            ):
-
-                with st.container(
-                    border=True
-                ):
-
-                    col1, col2 = (
-                        st.columns(
-                            [
-                                2,
-                                1,
-                            ]
-                        )
-                    )
-
-                    with col1:
-
-                        st.write(
-                            f"Vehicle ID: "
-                            f"{row.get('vehicle_id', '')}"
-                        )
-
-                        st.write(
-                            f"Number Plate: "
-                            f"{row.get('number_plate', 'UNKNOWN')}"
-                        )
-
-                        st.write(
-                            f"Detected Speed: "
-                            f"{row.get('speed_kmph', 0)} km/h"
-                        )
-
-                        st.write(
-                            f"Speed Limit: "
-                            f"{row.get('speed_limit_kmph', 0)} km/h"
-                        )
-
-                        st.write(
-                            f"Timestamp: "
-                            f"{row.get('timestamp', '')}"
-                        )
-
-                        st.error(
-                            "OVERSPEED"
-                        )
-
-                    with col2:
-
-                        evidence_path = (
-                            row.get(
-                                "evidence_image",
-                                "",
-                            )
-                        )
-
-                        if (
-                            isinstance(
-                                evidence_path,
-                                str,
-                            )
-                            and evidence_path.strip()
-                            and
-                            Path(
-                                evidence_path
-                            ).exists()
-                        ):
-
-                            st.image(
-                                evidence_path,
-                                caption=(
-                                    "Violation Evidence"
-                                ),
-                                use_container_width=True,
-                            )
-
-                        else:
-
-                            st.write(
-                                "Evidence image unavailable."
-                            )
+            st.dataframe(
+                overspeed_data,
+                use_container_width=True,
+                hide_index=True,
+            )
 
     else:
 
@@ -769,9 +811,7 @@ if (
             ]
         )
 
-        if (
-            search_results.empty
-        ):
+        if search_results.empty:
 
             st.warning(
                 "No matching vehicle found."
@@ -795,7 +835,7 @@ if (
 
 
     # =====================================================
-    # CSV EXPORT
+    # EXPORT
     # =====================================================
 
     st.subheader(
@@ -838,13 +878,9 @@ if (
     else:
 
         st.info(
-            "No violation report is available yet."
+            "No report is available yet."
         )
 
-
-# =========================================================
-# EMPTY STATE
-# =========================================================
 
 else:
 

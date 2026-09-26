@@ -11,27 +11,13 @@ from ultralytics import YOLO
 from src.plate_reader import detect_and_read_plate
 
 
-# =========================================================
-# PATHS
-# =========================================================
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 OUTPUT_DIR = PROJECT_ROOT / "data" / "output"
 VIOLATION_DIR = OUTPUT_DIR / "violations"
 
-
-# =========================================================
-# MODEL SETTINGS
-# =========================================================
-
 MODEL_NAME = "yolo26n.pt"
 
-# COCO vehicle classes
-# 2 = car
-# 3 = motorcycle
-# 5 = bus
-# 7 = truck
 VEHICLE_CLASSES = [2, 3, 5, 7]
 
 CONFIDENCE_THRESHOLD = 0.35
@@ -40,65 +26,36 @@ DEFAULT_DISTANCE_METERS = 10.0
 DEFAULT_SPEED_LIMIT_KMPH = 50.0
 
 
-# =========================================================
-# LOAD YOLO
-# =========================================================
-
 @lru_cache(maxsize=1)
 def load_yolo_model():
+    return YOLO(MODEL_NAME)
 
-    return YOLO(
-        MODEL_NAME
-    )
-
-
-# =========================================================
-# LINE CROSSING
-# =========================================================
 
 def crossed_line(
     previous_position,
     current_position,
     line_position,
 ):
-
     return (
-        previous_position
-        < line_position
-        <= current_position
+        previous_position < line_position <= current_position
         or
-        previous_position
-        > line_position
-        >= current_position
+        previous_position > line_position >= current_position
     )
 
-
-# =========================================================
-# SPEED
-# =========================================================
 
 def calculate_speed(
     distance_meters,
     elapsed_seconds,
 ):
-
     if elapsed_seconds <= 0:
         return 0.0
 
-    meters_per_second = (
+    return (
         distance_meters
         / elapsed_seconds
-    )
-
-    return (
-        meters_per_second
         * 3.6
     )
 
-
-# =========================================================
-# CROSSING PROCESSOR
-# =========================================================
 
 def process_crossing_pair(
     crossing_store,
@@ -107,56 +64,28 @@ def process_crossing_pair(
     crossed_b,
     current_time,
 ):
-
-    if (
-        vehicle_id
-        not in crossing_store
-    ):
+    if vehicle_id not in crossing_store:
 
         if crossed_a:
-
-            crossing_store[
-                vehicle_id
-            ] = {
+            crossing_store[vehicle_id] = {
                 "line": "A",
                 "time": current_time,
             }
 
         elif crossed_b:
-
-            crossing_store[
-                vehicle_id
-            ] = {
+            crossing_store[vehicle_id] = {
                 "line": "B",
                 "time": current_time,
             }
 
         return None
 
-    first_crossing = (
-        crossing_store[
-            vehicle_id
-        ]
-    )
+    first_crossing = crossing_store[vehicle_id]
 
-    first_line = (
-        first_crossing[
-            "line"
-        ]
-    )
+    first_line = first_crossing["line"]
+    first_time = first_crossing["time"]
 
-    first_time = (
-        first_crossing[
-            "time"
-        ]
-    )
-
-    # Prevent extremely old crossings
-    if (
-        current_time
-        - first_time
-        > 15
-    ):
+    if current_time - first_time > 15:
 
         crossing_store.pop(
             vehicle_id,
@@ -171,30 +100,19 @@ def process_crossing_pair(
         first_line == "A"
         and crossed_b
     ):
-
         completed = True
 
     elif (
         first_line == "B"
         and crossed_a
     ):
-
         completed = True
 
     if not completed:
         return None
 
-    elapsed_time = (
-        current_time
-        - first_time
-    )
+    return current_time - first_time
 
-    return elapsed_time
-
-
-# =========================================================
-# VEHICLE CROP
-# =========================================================
 
 def crop_vehicle(
     frame,
@@ -203,49 +121,32 @@ def crop_vehicle(
     x2,
     y2,
 ):
-
-    height, width = (
-        frame.shape[:2]
-    )
+    height, width = frame.shape[:2]
 
     x1 = max(
         0,
-        min(
-            x1,
-            width - 1,
-        ),
+        min(x1, width - 1),
     )
 
     x2 = max(
         0,
-        min(
-            x2,
-            width,
-        ),
+        min(x2, width),
     )
 
     y1 = max(
         0,
-        min(
-            y1,
-            height - 1,
-        ),
+        min(y1, height - 1),
     )
 
     y2 = max(
         0,
-        min(
-            y2,
-            height,
-        ),
+        min(y2, height),
     )
 
     if (
         x2 <= x1
-        or
-        y2 <= y1
+        or y2 <= y1
     ):
-
         return None
 
     return frame[
@@ -254,27 +155,19 @@ def crop_vehicle(
     ]
 
 
-# =========================================================
-# SAVE EVIDENCE
-# =========================================================
-
 def save_evidence(
     frame,
     vehicle_id,
     plate,
     speed,
 ):
-
     VIOLATION_DIR.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    timestamp = (
-        datetime.now()
-        .strftime(
-            "%Y%m%d_%H%M%S_%f"
-        )
+    timestamp = datetime.now().strftime(
+        "%Y%m%d_%H%M%S_%f"
     )
 
     safe_plate = (
@@ -303,15 +196,15 @@ def save_evidence(
     return str(path)
 
 
-# =========================================================
-# MAIN PIPELINE
-# =========================================================
-
 def process_video(
     input_video,
     output_video,
     calibrated_distance_meters=DEFAULT_DISTANCE_METERS,
     speed_limit_kmph=DEFAULT_SPEED_LIMIT_KMPH,
+    horizontal_line_a_pct=45.0,
+    horizontal_line_b_pct=60.0,
+    vertical_line_a_pct=40.0,
+    vertical_line_b_pct=60.0,
     progress_callback=None,
 ):
 
@@ -334,28 +227,17 @@ def process_video(
     )
 
     if not input_video.exists():
-
         raise FileNotFoundError(
-            f"Input video not found: "
-            f"{input_video}"
+            f"Input video not found: {input_video}"
         )
 
-    # =====================================================
-    # LOAD MODEL
-    # =====================================================
-
     model = load_yolo_model()
-
-    # =====================================================
-    # OPEN VIDEO
-    # =====================================================
 
     cap = cv2.VideoCapture(
         str(input_video)
     )
 
     if not cap.isOpened():
-
         raise RuntimeError(
             "Unable to open uploaded video."
         )
@@ -385,43 +267,36 @@ def process_video(
         )
     )
 
-
     # =====================================================
-    # SPEED LINES
-    # =====================================================
-    #
-    # Horizontal lines measure vehicles moving
-    # vertically through the frame.
-    #
-    # Vertical lines measure vehicles moving
-    # horizontally through the frame.
+    # USER-ADJUSTABLE SPEED LINES
     # =====================================================
 
     horizontal_line_a = int(
-        height * 0.45
+        height
+        * horizontal_line_a_pct
+        / 100
     )
 
     horizontal_line_b = int(
-        height * 0.60
+        height
+        * horizontal_line_b_pct
+        / 100
     )
 
     vertical_line_a = int(
-        width * 0.40
+        width
+        * vertical_line_a_pct
+        / 100
     )
 
     vertical_line_b = int(
-        width * 0.60
+        width
+        * vertical_line_b_pct
+        / 100
     )
 
-
-    # =====================================================
-    # VIDEO WRITER
-    # =====================================================
-
-    fourcc = (
-        cv2.VideoWriter_fourcc(
-            *"mp4v"
-        )
+    fourcc = cv2.VideoWriter_fourcc(
+        *"mp4v"
     )
 
     writer = cv2.VideoWriter(
@@ -442,45 +317,29 @@ def process_video(
             "Unable to create output video."
         )
 
-
-    # =====================================================
-    # TRACKING STORAGE
-    # =====================================================
-
     previous_positions = {}
 
     vertical_crossings = {}
-
     horizontal_crossings = {}
 
     vehicle_speeds = {}
-
     vehicle_directions = {}
 
     vehicle_plates = {}
 
     ocr_attempts = {}
-
     last_ocr_frame = {}
 
     seen_vehicle_ids = set()
-
     logged_vehicles = set()
 
     records = []
 
     frame_number = 0
 
-
-    # =====================================================
-    # VIDEO LOOP
-    # =====================================================
-
     while True:
 
-        success, frame = (
-            cap.read()
-        )
+        success, frame = cap.read()
 
         if not success:
             break
@@ -492,14 +351,7 @@ def process_video(
             / fps
         )
 
-        clean_frame = (
-            frame.copy()
-        )
-
-
-        # =================================================
-        # YOLO + BYTETRACK
-        # =================================================
+        clean_frame = frame.copy()
 
         results = model.track(
             source=clean_frame,
@@ -510,9 +362,9 @@ def process_video(
             verbose=False,
         )
 
-
         # =================================================
-        # DRAW HORIZONTAL SPEED LINES
+        # HORIZONTAL LINES
+        # Vehicles moving vertically cross these.
         # =================================================
 
         cv2.line(
@@ -553,9 +405,12 @@ def process_video(
 
         cv2.putText(
             frame,
-            "VERTICAL TRAFFIC A",
             (
-                15,
+                f"Horizontal A "
+                f"({horizontal_line_a_pct:.0f}%)"
+            ),
+            (
+                10,
                 max(
                     25,
                     horizontal_line_a - 8,
@@ -573,9 +428,12 @@ def process_video(
 
         cv2.putText(
             frame,
-            "VERTICAL TRAFFIC B",
             (
-                15,
+                f"Horizontal B "
+                f"({horizontal_line_b_pct:.0f}%)"
+            ),
+            (
+                10,
                 max(
                     25,
                     horizontal_line_b - 8,
@@ -591,9 +449,9 @@ def process_video(
             2,
         )
 
-
         # =================================================
-        # DRAW VERTICAL SPEED LINES
+        # VERTICAL LINES
+        # Vehicles moving horizontally cross these.
         # =================================================
 
         cv2.line(
@@ -634,7 +492,10 @@ def process_video(
 
         cv2.putText(
             frame,
-            "HORIZONTAL A",
+            (
+                f"Vertical A "
+                f"({vertical_line_a_pct:.0f}%)"
+            ),
             (
                 vertical_line_a + 5,
                 25,
@@ -651,7 +512,10 @@ def process_video(
 
         cv2.putText(
             frame,
-            "HORIZONTAL B",
+            (
+                f"Vertical B "
+                f"({vertical_line_b_pct:.0f}%)"
+            ),
             (
                 vertical_line_b + 5,
                 50,
@@ -666,16 +530,7 @@ def process_video(
             2,
         )
 
-
-        boxes = (
-            results[0]
-            .boxes
-        )
-
-
-        # =================================================
-        # VEHICLE PROCESSING
-        # =================================================
+        boxes = results[0].boxes
 
         if (
             boxes is not None
@@ -735,30 +590,18 @@ def process_video(
                     vehicle_id
                 )
 
-
-                # =========================================
-                # VEHICLE REFERENCE POINT
-                # =========================================
-
                 center_x = int(
                     (
-                        x1 + x2
-                    )
-                    / 2
-                )
-
-                center_y = int(
-                    (
-                        y1 + y2
+                        x1
+                        + x2
                     )
                     / 2
                 )
 
                 bottom_y = y2
 
-
                 # =========================================
-                # SPEED ESTIMATION
+                # SPEED MEASUREMENT
                 # =========================================
 
                 if (
@@ -769,22 +612,22 @@ def process_video(
                     not in vehicle_speeds
                 ):
 
-                    old_x, old_y = (
+                    (
+                        previous_x,
+                        previous_y,
+                    ) = (
                         previous_positions[
                             vehicle_id
                         ]
                     )
 
-
                     # -------------------------------------
-                    # VERTICAL VEHICLE MOVEMENT
-                    #
-                    # Vehicle crosses horizontal lines.
+                    # Vertical vehicle movement
                     # -------------------------------------
 
                     crossed_horizontal_a = (
                         crossed_line(
-                            old_y,
+                            previous_y,
                             bottom_y,
                             horizontal_line_a,
                         )
@@ -792,7 +635,7 @@ def process_video(
 
                     crossed_horizontal_b = (
                         crossed_line(
-                            old_y,
+                            previous_y,
                             bottom_y,
                             horizontal_line_b,
                         )
@@ -808,16 +651,13 @@ def process_video(
                         )
                     )
 
-
                     # -------------------------------------
-                    # HORIZONTAL VEHICLE MOVEMENT
-                    #
-                    # Vehicle crosses vertical lines.
+                    # Horizontal vehicle movement
                     # -------------------------------------
 
                     crossed_vertical_a = (
                         crossed_line(
-                            old_x,
+                            previous_x,
                             center_x,
                             vertical_line_a,
                         )
@@ -825,7 +665,7 @@ def process_video(
 
                     crossed_vertical_b = (
                         crossed_line(
-                            old_x,
+                            previous_x,
                             center_x,
                             vertical_line_b,
                         )
@@ -841,13 +681,8 @@ def process_video(
                         )
                     )
 
-
-                    # -------------------------------------
-                    # CHOOSE COMPLETED MEASUREMENT
-                    # -------------------------------------
-
                     elapsed_time = None
-                    movement_direction = None
+                    direction = None
 
                     if (
                         vertical_elapsed
@@ -858,7 +693,7 @@ def process_video(
                             vertical_elapsed
                         )
 
-                        movement_direction = (
+                        direction = (
                             "VERTICAL"
                         )
 
@@ -868,8 +703,7 @@ def process_video(
                     ):
 
                         if (
-                            elapsed_time
-                            is None
+                            elapsed_time is None
                             or
                             horizontal_elapsed
                             < elapsed_time
@@ -879,10 +713,9 @@ def process_video(
                                 horizontal_elapsed
                             )
 
-                            movement_direction = (
+                            direction = (
                                 "HORIZONTAL"
                             )
-
 
                     if (
                         elapsed_time is not None
@@ -902,8 +735,7 @@ def process_video(
 
                         vehicle_directions[
                             vehicle_id
-                        ] = movement_direction
-
+                        ] = direction
 
                 previous_positions[
                     vehicle_id
@@ -912,9 +744,8 @@ def process_video(
                     bottom_y,
                 )
 
-
                 # =========================================
-                # NUMBER PLATE DETECTION
+                # NUMBER PLATE RECOGNITION
                 # =========================================
 
                 if (
@@ -939,11 +770,9 @@ def process_video(
                     should_try_ocr = (
                         attempts < 5
                         and
-                        (
-                            frame_number
-                            - previous_ocr_frame
-                            >= 10
-                        )
+                        frame_number
+                        - previous_ocr_frame
+                        >= 10
                     )
 
                     if should_try_ocr:
@@ -961,8 +790,7 @@ def process_video(
                         if (
                             vehicle_crop
                             is not None
-                            and
-                            vehicle_crop.size > 0
+                            and vehicle_crop.size > 0
                         ):
 
                             (
@@ -997,15 +825,14 @@ def process_video(
                                 )
 
                                 print(
-                                    "Plate detected: "
+                                    f"Plate detected: "
                                     f"Vehicle {vehicle_id} "
                                     f"-> {plate_text} "
                                     f"({plate_confidence:.2f})"
                                 )
 
-
                 # =========================================
-                # BOX AND LABEL
+                # VEHICLE DISPLAY
                 # =========================================
 
                 box_color = (
@@ -1057,7 +884,6 @@ def process_video(
                             " | OVERSPEED"
                         )
 
-
                 if (
                     vehicle_id
                     in vehicle_plates
@@ -1069,7 +895,6 @@ def process_video(
                             vehicle_id
                         ]
                     )
-
 
                 cv2.rectangle(
                     frame,
@@ -1112,9 +937,8 @@ def process_video(
                     2,
                 )
 
-
                 # =========================================
-                # LOG VEHICLE
+                # LOG COMPLETED MEASUREMENT
                 # =========================================
 
                 if (
@@ -1184,55 +1008,47 @@ def process_video(
                                 )
                             )
 
-                        record = {
-
-                            "vehicle_id":
-                                vehicle_id,
-
-                            "number_plate":
-                                plate,
-
-                            "movement_direction":
-                                direction,
-
-                            "speed_kmph":
-                                round(
-                                    speed,
-                                    2,
-                                ),
-
-                            "speed_limit_kmph":
-                                round(
-                                    speed_limit_kmph,
-                                    2,
-                                ),
-
-                            "timestamp":
-                                datetime.now()
-                                .strftime(
-                                    "%Y-%m-%d "
-                                    "%H:%M:%S"
-                                ),
-
-                            "violation_status":
-                                violation_status,
-
-                            "evidence_image":
-                                evidence_image,
-                        }
-
                         records.append(
-                            record
+                            {
+                                "vehicle_id":
+                                    vehicle_id,
+
+                                "number_plate":
+                                    plate,
+
+                                "movement_direction":
+                                    direction,
+
+                                "speed_kmph":
+                                    round(
+                                        speed,
+                                        2,
+                                    ),
+
+                                "speed_limit_kmph":
+                                    round(
+                                        speed_limit_kmph,
+                                        2,
+                                    ),
+
+                                "timestamp":
+                                    datetime.now()
+                                    .strftime(
+                                        "%Y-%m-%d "
+                                        "%H:%M:%S"
+                                    ),
+
+                                "violation_status":
+                                    violation_status,
+
+                                "evidence_image":
+                                    evidence_image,
+                            }
                         )
 
                         logged_vehicles.add(
                             vehicle_id
                         )
-
-
-        # =================================================
-        # COUNTERS
-        # =================================================
 
         tracked_count = len(
             seen_vehicle_ids
@@ -1253,11 +1069,6 @@ def process_video(
             if speed
             > speed_limit_kmph
         )
-
-
-        # =================================================
-        # INFORMATION PANEL
-        # =================================================
 
         cv2.rectangle(
             frame,
@@ -1356,23 +1167,12 @@ def process_video(
             2,
         )
 
-
-        # =================================================
-        # WRITE FRAME
-        # =================================================
-
         writer.write(
             frame
         )
 
-
-        # =================================================
-        # PROGRESS
-        # =================================================
-
         if (
-            progress_callback
-            is not None
+            progress_callback is not None
             and total_frames > 0
         ):
 
@@ -1384,15 +1184,8 @@ def process_video(
                 )
             )
 
-
-    # =====================================================
-    # RELEASE
-    # =====================================================
-
     cap.release()
-
     writer.release()
-
 
     # =====================================================
     # FALLBACK LOGGING
@@ -1407,7 +1200,6 @@ def process_video(
             vehicle_id
             in logged_vehicles
         ):
-
             continue
 
         plate = (
@@ -1431,55 +1223,47 @@ def process_video(
             else "NORMAL"
         )
 
-        record = {
-
-            "vehicle_id":
-                vehicle_id,
-
-            "number_plate":
-                plate,
-
-            "movement_direction":
-                direction,
-
-            "speed_kmph":
-                round(
-                    speed,
-                    2,
-                ),
-
-            "speed_limit_kmph":
-                round(
-                    speed_limit_kmph,
-                    2,
-                ),
-
-            "timestamp":
-                datetime.now()
-                .strftime(
-                    "%Y-%m-%d "
-                    "%H:%M:%S"
-                ),
-
-            "violation_status":
-                violation_status,
-
-            "evidence_image":
-                "",
-        }
-
         records.append(
-            record
+            {
+                "vehicle_id":
+                    vehicle_id,
+
+                "number_plate":
+                    plate,
+
+                "movement_direction":
+                    direction,
+
+                "speed_kmph":
+                    round(
+                        speed,
+                        2,
+                    ),
+
+                "speed_limit_kmph":
+                    round(
+                        speed_limit_kmph,
+                        2,
+                    ),
+
+                "timestamp":
+                    datetime.now()
+                    .strftime(
+                        "%Y-%m-%d "
+                        "%H:%M:%S"
+                    ),
+
+                "violation_status":
+                    violation_status,
+
+                "evidence_image":
+                    "",
+            }
         )
 
         logged_vehicles.add(
             vehicle_id
         )
-
-
-    # =====================================================
-    # DATAFRAME
-    # =====================================================
 
     dataframe = pd.DataFrame(
         records
@@ -1495,23 +1279,20 @@ def process_video(
         index=False,
     )
 
-
-    # =====================================================
-    # SUMMARY
-    # =====================================================
-
     vertical_measurements = sum(
         1
         for direction
         in vehicle_directions.values()
-        if direction == "VERTICAL"
+        if direction
+        == "VERTICAL"
     )
 
     horizontal_measurements = sum(
         1
         for direction
         in vehicle_directions.values()
-        if direction == "HORIZONTAL"
+        if direction
+        == "HORIZONTAL"
     )
 
     summary = {
@@ -1551,6 +1332,18 @@ def process_video(
         "horizontal_measurements":
             horizontal_measurements,
 
+        "horizontal_line_a_pct":
+            horizontal_line_a_pct,
+
+        "horizontal_line_b_pct":
+            horizontal_line_b_pct,
+
+        "vertical_line_a_pct":
+            vertical_line_a_pct,
+
+        "vertical_line_b_pct":
+            vertical_line_b_pct,
+
         "output_video":
             str(
                 output_video
@@ -1562,11 +1355,7 @@ def process_video(
             ),
     }
 
-    if (
-        progress_callback
-        is not None
-    ):
-
+    if progress_callback is not None:
         progress_callback(
             1.0
         )
