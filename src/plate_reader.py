@@ -5,6 +5,7 @@ from pathlib import Path
 
 import cv2
 import easyocr
+from src.plate_detector import find_plate_candidates
 
 
 # ---------------------------------------------------------
@@ -329,136 +330,6 @@ def read_number_plate(plate_image):
 # FIND POSSIBLE NUMBER PLATE REGIONS
 # ---------------------------------------------------------
 
-def find_plate_candidates(
-    vehicle_image,
-):
-    """
-    Find rectangular regions that
-    may contain a number plate.
-    """
-
-    if (
-        vehicle_image is None
-        or vehicle_image.size == 0
-    ):
-
-        return []
-
-    height, width = (
-        vehicle_image.shape[:2]
-    )
-
-    gray = cv2.cvtColor(
-        vehicle_image,
-        cv2.COLOR_BGR2GRAY,
-    )
-
-    blurred = cv2.bilateralFilter(
-        gray,
-        11,
-        17,
-        17,
-    )
-
-    edges = cv2.Canny(
-        blurred,
-        30,
-        200,
-    )
-
-    contours, _ = cv2.findContours(
-        edges,
-        cv2.RETR_TREE,
-        cv2.CHAIN_APPROX_SIMPLE,
-    )
-
-    contours = sorted(
-        contours,
-        key=cv2.contourArea,
-        reverse=True,
-    )[:50]
-
-    candidates = []
-
-    vehicle_area = (
-        width * height
-    )
-
-    for contour in contours:
-
-        perimeter = cv2.arcLength(
-            contour,
-            True,
-        )
-
-        approx = cv2.approxPolyDP(
-            contour,
-            0.02 * perimeter,
-            True,
-        )
-
-        if len(approx) != 4:
-
-            continue
-
-        x, y, w, h = (
-            cv2.boundingRect(
-                approx
-            )
-        )
-
-        if h == 0:
-
-            continue
-
-        aspect_ratio = (
-            w / h
-        )
-
-        area = (
-            w * h
-        )
-
-        area_ratio = (
-            area / vehicle_area
-        )
-
-        # Typical number plate proportions
-        if (
-            2.0
-            <= aspect_ratio
-            <= 6.5
-            and
-            0.003
-            <= area_ratio
-            <= 0.30
-        ):
-
-            plate_crop = (
-                vehicle_image[
-                    y:y + h,
-                    x:x + w,
-                ]
-            )
-
-            candidates.append(
-                (
-                    plate_crop,
-                    (
-                        x,
-                        y,
-                        w,
-                        h,
-                    ),
-                )
-            )
-
-    return candidates
-
-
-# ---------------------------------------------------------
-# DETECT AND READ NUMBER PLATE
-# ---------------------------------------------------------
 
 def detect_and_read_plate(
     vehicle_image,
