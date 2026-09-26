@@ -1,4 +1,4 @@
-ultralytics
+ultralytics-opencv-headless
 opencv-python-headless
 numpy
 pandas
