@@ -1,8 +1,4 @@
-# Save this file as:
 # src/web_pipeline.py
-#
-# This is the deployment-friendly version of the pipeline.
-# It does NOT use cv2.imshow(), so it can run on Streamlit/Railway.
 
 from datetime import datetime
 from functools import lru_cache
@@ -15,13 +11,27 @@ from ultralytics import YOLO
 from src.plate_reader import detect_and_read_plate
 
 
+# ---------------------------------------------------------
+# PROJECT PATHS
+# ---------------------------------------------------------
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 OUTPUT_DIR = PROJECT_ROOT / "data" / "output"
 VIOLATION_DIR = OUTPUT_DIR / "violations"
 
+
+# ---------------------------------------------------------
+# VEHICLE DETECTION MODEL
+# ---------------------------------------------------------
+
 MODEL_NAME = "yolo26n.pt"
 
+# COCO classes:
+# 2 = car
+# 3 = motorcycle
+# 5 = bus
+# 7 = truck
 VEHICLE_CLASSES = [2, 3, 5, 7]
 
 CONFIDENCE_THRESHOLD = 0.35
@@ -30,26 +40,52 @@ DEFAULT_DISTANCE_METERS = 10.0
 DEFAULT_SPEED_LIMIT_KMPH = 50.0
 
 
+# ---------------------------------------------------------
+# LOAD YOLO MODEL
+# ---------------------------------------------------------
+
 @lru_cache(maxsize=1)
 def load_yolo_model():
     return YOLO(MODEL_NAME)
 
 
-def crossed_line(previous_y, current_y, line_y):
+# ---------------------------------------------------------
+# LINE CROSSING
+# ---------------------------------------------------------
+
+def crossed_line(
+    previous_y,
+    current_y,
+    line_y,
+):
     return (
         previous_y < line_y <= current_y
         or previous_y > line_y >= current_y
     )
 
 
-def calculate_speed(distance_meters, elapsed_seconds):
+# ---------------------------------------------------------
+# SPEED CALCULATION
+# ---------------------------------------------------------
+
+def calculate_speed(
+    distance_meters,
+    elapsed_seconds,
+):
     if elapsed_seconds <= 0:
         return 0.0
 
-    speed_mps = distance_meters / elapsed_seconds
+    speed_mps = (
+        distance_meters
+        / elapsed_seconds
+    )
 
     return speed_mps * 3.6
 
+
+# ---------------------------------------------------------
+# VEHICLE CROP
+# ---------------------------------------------------------
 
 def crop_vehicle(
     frame,
@@ -60,13 +96,30 @@ def crop_vehicle(
 ):
     height, width = frame.shape[:2]
 
-    x1 = max(0, min(x1, width - 1))
-    x2 = max(0, min(x2, width))
+    x1 = max(
+        0,
+        min(x1, width - 1),
+    )
 
-    y1 = max(0, min(y1, height - 1))
-    y2 = max(0, min(y2, height))
+    x2 = max(
+        0,
+        min(x2, width),
+    )
 
-    if x2 <= x1 or y2 <= y1:
+    y1 = max(
+        0,
+        min(y1, height - 1),
+    )
+
+    y2 = max(
+        0,
+        min(y2, height),
+    )
+
+    if (
+        x2 <= x1
+        or y2 <= y1
+    ):
         return None
 
     return frame[
@@ -74,6 +127,10 @@ def crop_vehicle(
         x1:x2,
     ]
 
+
+# ---------------------------------------------------------
+# SAVE VIOLATION EVIDENCE
+# ---------------------------------------------------------
 
 def save_evidence(
     frame,
@@ -116,6 +173,10 @@ def save_evidence(
     return str(path)
 
 
+# ---------------------------------------------------------
+# MAIN VIDEO PROCESSING FUNCTION
+# ---------------------------------------------------------
+
 def process_video(
     input_video,
     output_video,
@@ -123,6 +184,7 @@ def process_video(
     speed_limit_kmph=DEFAULT_SPEED_LIMIT_KMPH,
     progress_callback=None,
 ):
+
     OUTPUT_DIR.mkdir(
         parents=True,
         exist_ok=True,
@@ -146,7 +208,15 @@ def process_video(
             f"Input video not found: {input_video}"
         )
 
+    # -----------------------------------------------------
+    # LOAD YOLO VEHICLE MODEL
+    # -----------------------------------------------------
+
     model = load_yolo_model()
+
+    # -----------------------------------------------------
+    # OPEN VIDEO
+    # -----------------------------------------------------
 
     cap = cv2.VideoCapture(
         str(input_video)
@@ -182,6 +252,10 @@ def process_video(
         )
     )
 
+    # -----------------------------------------------------
+    # SPEED MEASUREMENT LINES
+    # -----------------------------------------------------
+
     line_a = int(
         height * 0.40
     )
@@ -189,6 +263,10 @@ def process_video(
     line_b = int(
         height * 0.70
     )
+
+    # -----------------------------------------------------
+    # OUTPUT VIDEO WRITER
+    # -----------------------------------------------------
 
     fourcc = (
         cv2.VideoWriter_fourcc(
@@ -207,11 +285,16 @@ def process_video(
     )
 
     if not writer.isOpened():
+
         cap.release()
 
         raise RuntimeError(
             "Unable to create output video."
         )
+
+    # -----------------------------------------------------
+    # TRACKING DATA
+    # -----------------------------------------------------
 
     previous_positions = {}
 
@@ -223,13 +306,22 @@ def process_video(
 
     ocr_attempts = {}
 
+    last_ocr_frame = {}
+
+    seen_vehicle_ids = set()
+
     logged_vehicles = set()
 
     records = []
 
     frame_number = 0
 
+    # -----------------------------------------------------
+    # PROCESS VIDEO
+    # -----------------------------------------------------
+
     while True:
+
         success, frame = cap.read()
 
         if not success:
@@ -242,14 +334,27 @@ def process_video(
             / fps
         )
 
+        # Keep clean copy for OCR.
+        # This prevents speed lines and labels
+        # from interfering with plate recognition.
+        clean_frame = frame.copy()
+
+        # -------------------------------------------------
+        # VEHICLE DETECTION + TRACKING
+        # -------------------------------------------------
+
         results = model.track(
-            source=frame,
+            source=clean_frame,
             persist=True,
             tracker="bytetrack.yaml",
             classes=VEHICLE_CLASSES,
             conf=CONFIDENCE_THRESHOLD,
             verbose=False,
         )
+
+        # -------------------------------------------------
+        # DRAW SPEED LINES
+        # -------------------------------------------------
 
         cv2.line(
             frame,
@@ -329,10 +434,15 @@ def process_video(
 
         boxes = results[0].boxes
 
+        # -------------------------------------------------
+        # PROCESS TRACKED VEHICLES
+        # -------------------------------------------------
+
         if (
             boxes is not None
             and boxes.id is not None
         ):
+
             xyxy_boxes = (
                 boxes.xyxy
                 .cpu()
@@ -361,6 +471,7 @@ def process_video(
                 class_ids,
                 track_ids,
             ):
+
                 (
                     x1,
                     y1,
@@ -381,6 +492,14 @@ def process_video(
                     ]
                 )
 
+                # -----------------------------------------
+                # RECORD UNIQUE VEHICLE
+                # -----------------------------------------
+
+                seen_vehicle_ids.add(
+                    vehicle_id
+                )
+
                 center_x = int(
                     (
                         x1
@@ -391,10 +510,15 @@ def process_video(
 
                 bottom_y = y2
 
+                # -----------------------------------------
+                # SPEED ESTIMATION
+                # -----------------------------------------
+
                 if (
                     vehicle_id
                     in previous_positions
                 ):
+
                     old_y = (
                         previous_positions[
                             vehicle_id
@@ -417,11 +541,15 @@ def process_video(
                         vehicle_id
                         not in vehicle_speeds
                     ):
+
+                        # First line crossing
                         if (
                             vehicle_id
                             not in first_crossings
                         ):
+
                             if crossed_a:
+
                                 first_crossings[
                                     vehicle_id
                                 ] = {
@@ -430,6 +558,7 @@ def process_video(
                                 }
 
                             elif crossed_b:
+
                                 first_crossings[
                                     vehicle_id
                                 ] = {
@@ -437,7 +566,9 @@ def process_video(
                                     "time": current_time,
                                 }
 
+                        # Second line crossing
                         else:
+
                             first_line = (
                                 first_crossings[
                                     vehicle_id
@@ -469,6 +600,7 @@ def process_video(
                                 measurement_complete = True
 
                             if measurement_complete:
+
                                 elapsed_time = (
                                     current_time
                                     - first_time
@@ -487,12 +619,22 @@ def process_video(
                     vehicle_id
                 ] = bottom_y
 
+                # =========================================
+                # NUMBER PLATE DETECTION
+                # =========================================
+                #
+                # IMPORTANT:
+                # ANPR now works independently from speed.
+                #
+                # A vehicle does NOT need to cross both
+                # speed lines before plate recognition.
+                # =========================================
+
                 if (
                     vehicle_id
-                    in vehicle_speeds
-                    and vehicle_id
                     not in vehicle_plates
                 ):
+
                     attempts = (
                         ocr_attempts.get(
                             vehicle_id,
@@ -500,9 +642,28 @@ def process_video(
                         )
                     )
 
-                    if attempts < 5:
+                    previous_ocr_frame = (
+                        last_ocr_frame.get(
+                            vehicle_id,
+                            -100,
+                        )
+                    )
+
+                    # Retry every 10 frames.
+                    # Maximum 5 OCR attempts per vehicle.
+                    should_try_ocr = (
+                        attempts < 5
+                        and (
+                            frame_number
+                            - previous_ocr_frame
+                            >= 10
+                        )
+                    )
+
+                    if should_try_ocr:
+
                         vehicle_crop = crop_vehicle(
-                            frame,
+                            clean_frame,
                             x1,
                             y1,
                             x2,
@@ -514,6 +675,7 @@ def process_video(
                             is not None
                             and vehicle_crop.size > 0
                         ):
+
                             (
                                 plate_text,
                                 plate_confidence,
@@ -529,10 +691,28 @@ def process_video(
                                 + 1
                             )
 
+                            last_ocr_frame[
+                                vehicle_id
+                            ] = frame_number
+
                             if plate_text:
+
                                 vehicle_plates[
                                     vehicle_id
                                 ] = plate_text
+
+                                print(
+                                    f"Plate detected: "
+                                    f"Vehicle "
+                                    f"{vehicle_id} -> "
+                                    f"{plate_text} "
+                                    f"(confidence "
+                                    f"{plate_confidence:.2f})"
+                                )
+
+                # -----------------------------------------
+                # DRAW VEHICLE BOX
+                # -----------------------------------------
 
                 box_color = (
                     0,
@@ -545,10 +725,15 @@ def process_video(
                     f" | {class_name}"
                 )
 
+                # -----------------------------------------
+                # DISPLAY SPEED
+                # -----------------------------------------
+
                 if (
                     vehicle_id
                     in vehicle_speeds
                 ):
+
                     speed = (
                         vehicle_speeds[
                             vehicle_id
@@ -564,6 +749,7 @@ def process_video(
                         speed
                         > speed_limit_kmph
                     ):
+
                         box_color = (
                             0,
                             0,
@@ -574,10 +760,15 @@ def process_video(
                             " | OVERSPEED"
                         )
 
+                # -----------------------------------------
+                # DISPLAY NUMBER PLATE
+                # -----------------------------------------
+
                 if (
                     vehicle_id
                     in vehicle_plates
                 ):
+
                     label += (
                         f" | "
                         f"{vehicle_plates[vehicle_id]}"
@@ -624,12 +815,17 @@ def process_video(
                     2,
                 )
 
+                # =========================================
+                # LOG SPEED MEASUREMENT
+                # =========================================
+
                 if (
                     vehicle_id
                     in vehicle_speeds
                     and vehicle_id
                     not in logged_vehicles
                 ):
+
                     attempts = (
                         ocr_attempts.get(
                             vehicle_id,
@@ -644,6 +840,7 @@ def process_video(
                     )
 
                     if ready_to_log:
+
                         speed = (
                             vehicle_speeds[
                                 vehicle_id
@@ -670,9 +867,10 @@ def process_video(
                             violation_status
                             == "OVERSPEED"
                         ):
+
                             evidence_image = (
                                 save_evidence(
-                                    frame.copy(),
+                                    clean_frame.copy(),
                                     vehicle_id,
                                     plate,
                                     speed,
@@ -680,8 +878,12 @@ def process_video(
                             )
 
                         record = {
-                            "vehicle_id": vehicle_id,
-                            "number_plate": plate,
+                            "vehicle_id": (
+                                vehicle_id
+                            ),
+                            "number_plate": (
+                                plate
+                            ),
                             "speed_kmph": round(
                                 speed,
                                 2,
@@ -693,7 +895,8 @@ def process_video(
                             "timestamp": (
                                 datetime.now()
                                 .strftime(
-                                    "%Y-%m-%d %H:%M:%S"
+                                    "%Y-%m-%d "
+                                    "%H:%M:%S"
                                 )
                             ),
                             "violation_status": (
@@ -712,8 +915,20 @@ def process_video(
                             vehicle_id
                         )
 
+        # -------------------------------------------------
+        # COUNTERS
+        # -------------------------------------------------
+
+        tracked_count = len(
+            seen_vehicle_ids
+        )
+
         measured_count = len(
             vehicle_speeds
+        )
+
+        plate_count = len(
+            vehicle_plates
         )
 
         overspeed_count = sum(
@@ -724,6 +939,10 @@ def process_video(
             > speed_limit_kmph
         )
 
+        # -------------------------------------------------
+        # INFORMATION PANEL
+        # -------------------------------------------------
+
         cv2.rectangle(
             frame,
             (
@@ -731,8 +950,8 @@ def process_video(
                 10,
             ),
             (
-                430,
-                115,
+                510,
+                135,
             ),
             (
                 0,
@@ -767,7 +986,7 @@ def process_video(
             ),
             (
                 20,
-                65,
+                62,
             ),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.55,
@@ -782,14 +1001,14 @@ def process_video(
         cv2.putText(
             frame,
             (
-                f"Measured: "
+                f"Tracked: "
+                f"{tracked_count}"
+                f" | Measured: "
                 f"{measured_count}"
-                f" | Overspeed: "
-                f"{overspeed_count}"
             ),
             (
                 20,
-                92,
+                89,
             ),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.55,
@@ -801,14 +1020,45 @@ def process_video(
             2,
         )
 
+        cv2.putText(
+            frame,
+            (
+                f"Plates: "
+                f"{plate_count}"
+                f" | Overspeed: "
+                f"{overspeed_count}"
+            ),
+            (
+                20,
+                116,
+            ),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (
+                255,
+                255,
+                255,
+            ),
+            2,
+        )
+
+        # -------------------------------------------------
+        # WRITE FRAME
+        # -------------------------------------------------
+
         writer.write(
             frame
         )
+
+        # -------------------------------------------------
+        # STREAMLIT PROGRESS
+        # -------------------------------------------------
 
         if (
             progress_callback is not None
             and total_frames > 0
         ):
+
             progress = min(
                 frame_number
                 / total_frames,
@@ -819,13 +1069,94 @@ def process_video(
                 progress
             )
 
+    # -----------------------------------------------------
+    # RELEASE VIDEO
+    # -----------------------------------------------------
+
     cap.release()
 
     writer.release()
 
+    # -----------------------------------------------------
+    # FALLBACK LOGGING
+    # -----------------------------------------------------
+    #
+    # If a vehicle received a speed measurement but
+    # disappeared before completing all OCR attempts,
+    # still log it as UNKNOWN.
+    # -----------------------------------------------------
+
+    for (
+        vehicle_id,
+        speed,
+    ) in vehicle_speeds.items():
+
+        if (
+            vehicle_id
+            in logged_vehicles
+        ):
+            continue
+
+        plate = (
+            vehicle_plates.get(
+                vehicle_id,
+                "UNKNOWN",
+            )
+        )
+
+        violation_status = (
+            "OVERSPEED"
+            if speed
+            > speed_limit_kmph
+            else "NORMAL"
+        )
+
+        record = {
+            "vehicle_id": (
+                vehicle_id
+            ),
+            "number_plate": (
+                plate
+            ),
+            "speed_kmph": round(
+                speed,
+                2,
+            ),
+            "speed_limit_kmph": round(
+                speed_limit_kmph,
+                2,
+            ),
+            "timestamp": (
+                datetime.now()
+                .strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+            ),
+            "violation_status": (
+                violation_status
+            ),
+            "evidence_image": "",
+        }
+
+        records.append(
+            record
+        )
+
+        logged_vehicles.add(
+            vehicle_id
+        )
+
+    # -----------------------------------------------------
+    # CREATE DATAFRAME
+    # -----------------------------------------------------
+
     dataframe = pd.DataFrame(
         records
     )
+
+    # -----------------------------------------------------
+    # SAVE CSV
+    # -----------------------------------------------------
 
     csv_path = (
         OUTPUT_DIR
@@ -837,16 +1168,28 @@ def process_video(
         index=False,
     )
 
+    # -----------------------------------------------------
+    # SUMMARY
+    # -----------------------------------------------------
+
     summary = {
+
+        "tracked_vehicles": len(
+            seen_vehicle_ids
+        ),
+
         "total_records": len(
             dataframe
         ),
+
         "measured_vehicles": len(
             vehicle_speeds
         ),
+
         "plates_detected": len(
             vehicle_plates
         ),
+
         "overspeed_violations": sum(
             1
             for speed
@@ -854,15 +1197,18 @@ def process_video(
             if speed
             > speed_limit_kmph
         ),
+
         "output_video": str(
             output_video
         ),
+
         "csv_file": str(
             csv_path
         ),
     }
 
     if progress_callback is not None:
+
         progress_callback(
             1.0
         )
