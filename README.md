@@ -1,21 +1,36 @@
-# AI-Based Speed Detection and Automatic Number Plate Recognition
+# AI-Based Vehicle Speed Detection and Automatic Number Plate Recognition
 
-An end-to-end computer vision system for detecting vehicles, tracking them across frames, estimating speed, recognizing number plates, detecting overspeed violations, and visualizing results through a Streamlit dashboard.
+An end-to-end computer vision project for detecting and tracking vehicles, estimating speed from configurable virtual measurement lines, recognizing number plates, identifying potential overspeed events, and presenting results through a deployed Streamlit dashboard.
 
-## Features
+## Live Demo
+
+Streamlit application:
+
+https://ai-speed-detection-anpr-az3xnf77hxk2ejgcyh26a5.streamlit.app/
+
+> The project is intended for education, research, and portfolio demonstration. Speed estimates are not certified for traffic enforcement.
+
+## Demo
+
+![Processed traffic output](docs/images/processed_output.png)
+
+## Key Features
 
 - Vehicle detection using Ultralytics YOLO
 - Multi-object tracking using ByteTrack
-- Vehicle speed estimation
-- Automatic Number Plate Recognition (ANPR)
-- EasyOCR-based plate recognition
-- Indian number-plate OCR correction
-- Overspeed violation detection
-- CSV-based violation logging
-- Evidence-image capture
-- Streamlit analytics dashboard
+- Horizontal and vertical traffic-motion support
+- Adjustable speed-measurement lines from the Streamlit sidebar
+- Configurable speed limit and inter-line distance
+- Dedicated YOLO-based license-plate localization
+- EasyOCR-based number-plate recognition
+- Indian registration-number normalization and OCR correction
+- Overspeed-event classification
+- Vehicle and violation logging
+- Evidence-image generation
+- CSV report export
 - Number-plate search
-- Downloadable violation reports
+- Processed-video preview and download
+- Streamlit cloud deployment
 
 ## System Pipeline
 
@@ -23,57 +38,150 @@ An end-to-end computer vision system for detecting vehicles, tracking them acros
 Traffic Video
       |
       v
-Vehicle Detection
+YOLO Vehicle Detection
       |
       v
-Vehicle Tracking
+ByteTrack Multi-Object Tracking
       |
-      v
-Speed Estimation
-      |
-      v
-Number Plate Detection
-      |
-      v
-OCR
-      |
-      v
-Plate Normalization
-      |
-      v
-Speed Limit Check
-      |
-      v
-Violation Logging
-      |
-      v
-Streamlit Dashboard
+      +-------------------------------+
+      |                               |
+      v                               v
+Horizontal / Vertical            Vehicle Crop
+Line-Crossing Analysis                |
+      |                               v
+      v                         YOLO Plate Detection
+Speed Estimation                      |
+      |                               v
+      |                           EasyOCR
+      |                               |
+      |                               v
+      |                      Plate Normalization
+      |                               |
+      +---------------+---------------+
+                      |
+                      v
+               Speed-Limit Check
+                      |
+                      v
+                Event Logging
+                      |
+                      v
+              Streamlit Dashboard
 ```
+
+## Example Deployment Test
+
+A representative Streamlit test run produced:
+
+| Metric | Result |
+|---|---:|
+| Vehicles tracked | 104 |
+| Vehicles with completed speed measurement | 8 |
+| Plates detected | 17 |
+| Vehicles logged | 8 |
+| Potential overspeed events | 5 |
+| Vertical-traffic measurements | 0 |
+| Horizontal-traffic measurements | 8 |
+
+These numbers demonstrate that the full pipeline executed end-to-end on the selected demo video. They are **not traffic-enforcement accuracy metrics**. In this test, the configured inter-line road distance was a demonstration value and had not been physically calibrated to the scene.
+
+## Streamlit Interface
+
+The dashboard allows a user to upload a traffic video, set the speed limit and nominal distance between measurement lines, and tune the four virtual line positions for the camera view.
+
+![Streamlit dashboard](docs/images/streamlit_dashboard.png)
+
+### Adjustable Speed Lines
+
+![Speed line controls](docs/images/speed_line_controls.png)
+
+The system supports:
+
+- two horizontal lines for vehicles moving mainly up/down through the frame
+- two vertical lines for vehicles moving mainly left/right through the frame
+
+Whichever complete line pair a tracked vehicle crosses can be used for a speed estimate.
+
+## Vehicle Records
+
+Each successfully measured vehicle can be recorded with its track ID, recognized plate when available, movement direction, estimated speed, configured limit, timestamp, and status.
+
+![Vehicle records](docs/images/vehicle_records.png)
+
+## Overspeed Events
+
+Potential overspeed events are separated in the dashboard for review.
+
+![Overspeed violations](docs/images/overspeed_violations.png)
+
+## Speed Estimation
+
+For a vehicle that crosses both lines of a measurement pair:
+
+```text
+Speed (m/s) = Calibrated Distance (m) / Elapsed Time (s)
+
+Speed (km/h) = Speed (m/s) × 3.6
+```
+
+The elapsed time is calculated from the tracked vehicle's line-crossing timestamps.
+
+### Important Calibration Note
+
+The numerical speed estimate is only meaningful when the real-world road distance represented by the two virtual lines has been measured correctly. Camera perspective, road geometry, frame rate, tracking stability, and line placement can all affect the result.
+
+For a production-grade system, perspective-aware calibration or homography should be used.
+
+## Number Plate Recognition
+
+The ANPR pipeline uses a dedicated YOLO plate detector to locate license plates inside vehicle crops. Detected plate regions are then preprocessed and read using EasyOCR.
+
+The post-processing stage normalizes OCR output and corrects common confusions in Indian-style registration numbers, for example:
+
+```text
+O / Q / D -> 0
+I / L     -> 1
+Z         -> 2
+S         -> 5
+B         -> 8
+```
+
+Corrections are applied according to the expected letter/digit positions rather than blindly replacing every character.
 
 ## Project Structure
 
 ```text
 ai-speed-detection-anpr/
-|
-|-- app/
-|   `-- streamlit_app.py
-|
-|-- data/
-|   |-- input/
-|   `-- output/
-|
-|-- src/
-|   |-- __init__.py
-|   |-- vehicle_detector.py
-|   |-- vehicle_tracker.py
-|   |-- speed_estimator.py
-|   |-- plate_reader.py
-|   `-- violation_logger.py
-|
-|-- main.py
-|-- requirements.txt
-|-- .gitignore
-`-- README.md
+├── app/
+│   └── streamlit_app.py
+│
+├── data/
+│   ├── input/
+│   └── output/
+│
+├── docs/
+│   └── images/
+│       ├── streamlit_dashboard.png
+│       ├── speed_line_controls.png
+│       ├── processed_output.png
+│       ├── vehicle_records.png
+│       └── overspeed_violations.png
+│
+├── src/
+│   ├── __init__.py
+│   ├── plate_detector.py
+│   ├── plate_reader.py
+│   ├── speed_estimator.py
+│   ├── vehicle_detector.py
+│   ├── vehicle_tracker.py
+│   ├── violation_logger.py
+│   └── web_pipeline.py
+│
+├── main.py
+├── packages.txt
+├── requirements.txt
+├── .gitignore
+└── README.md
 ```
 
 ## Technologies
@@ -83,10 +191,12 @@ ai-speed-detection-anpr/
 - Ultralytics YOLO
 - ByteTrack
 - EasyOCR
+- ONNX Runtime
+- Hugging Face Hub
+- PyTorch
 - NumPy
 - Pandas
 - Streamlit
-- PyTorch
 
 ## Installation
 
@@ -109,132 +219,64 @@ Activate it on Windows:
 .venv\Scripts\activate
 ```
 
-Install the dependencies:
+Install Python dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Run the Detection Pipeline
-
-Place a traffic video here:
-
-```text
-data/input/traffic.mp4
-```
-
-Run:
-
-```bash
-python main.py
-```
-
-Generated results are stored inside:
-
-```text
-data/output/
-```
-
-## Run the Dashboard
+Run the Streamlit application:
 
 ```bash
 python -m streamlit run app/streamlit_app.py
 ```
 
-The dashboard provides:
+## Streamlit Workflow
 
-- Vehicle records
-- Detected speeds
-- Overspeed violations
-- Number plates
-- Evidence images
-- Speed charts
-- Registration-number search
-- Downloadable CSV report
-
-## Speed Estimation
-
-The system estimates vehicle speed based on the time required for a tracked vehicle to cross two virtual road lines.
-
-```text
-Speed (m/s) = Distance (m) / Time (s)
-
-Speed (km/h) = Speed (m/s) × 3.6
-```
-
-The configured road distance must be calibrated to match the actual real-world distance represented between the virtual lines.
-
-## Number Plate Recognition
-
-The system attempts to locate the registration plate within the detected vehicle and passes it through EasyOCR.
-
-OCR post-processing corrects common character mistakes.
-
-Example:
-
-```text
-KAOIMN1234
-```
-
-is corrected to:
-
-```text
-KA01MN1234
-```
-
-Typical corrections include:
-
-```text
-O → 0
-I → 1
-Q → 0
-0 → O
-1 → I
-```
-
-depending on whether a letter or number is expected at that position.
-
-## Violation Logging
-
-The system can record:
-
-- Vehicle ID
-- Registration number
-- Detected speed
-- Speed limit
-- Timestamp
-- Violation status
-- Evidence-image location
+1. Upload a traffic video.
+2. Set the speed limit.
+3. Enter the real-world distance represented between the selected measurement lines.
+4. Position the horizontal and vertical line sliders over the traffic path.
+5. Process the video.
+6. Review tracked vehicles, completed speed measurements, recognized plates, and potential violations.
+7. Inspect the processed video and vehicle records.
+8. Export the CSV report.
 
 ## Current Limitations
 
-- Speed accuracy depends on camera positioning and calibration.
-- Perspective distortion can affect speed measurements.
-- OCR performance depends on plate visibility, resolution, lighting, angle, and motion blur.
-- Plate localization currently uses computer-vision heuristics.
-- The current system is intended for research and demonstration rather than certified traffic enforcement.
+- Speed accuracy depends on physical calibration of the road scene.
+- The simple inter-line distance model does not fully compensate for perspective.
+- Tracking IDs can change when vehicles are heavily occluded.
+- ANPR quality depends on plate size, visibility, lighting, viewing angle, compression, and motion blur.
+- Not every tracked vehicle will necessarily cross a complete measurement-line pair.
+- OCR can still produce incorrect characters or fail on low-resolution plates.
+- Cloud deployment is resource constrained compared with a local GPU environment.
+- The system is not certified for legal speed enforcement.
 
 ## Future Improvements
 
-- Dedicated YOLO number-plate detection model
-- Homography-based road calibration
-- More accurate perspective-aware speed estimation
-- Live CCTV/RTSP support
-- Database integration
-- Real-time violation alerts
+- Homography-based perspective calibration
+- Per-lane calibration
+- Automatic road-region and line placement
+- OCR consensus across multiple frames
+- Stronger plate-format validation
+- Improved low-resolution plate enhancement
+- Live CCTV / RTSP input
+- Persistent database storage
+- Real-time notifications
 - Vehicle-type analytics
-- Improved Indian plate validation
-- Dashboard video upload and processing
-- Cloud deployment
-- REST API
-- Authentication for traffic administrators
+- User authentication
+- Automated evaluation against annotated ground-truth data
+
+## Portfolio Summary
+
+This project demonstrates practical integration of object detection, multi-object tracking, OCR, computer vision, data processing, and cloud deployment in a single end-to-end AI application.
 
 ## Author
 
-**Amber Rodrigues**
-
+**Amber Rodrigues**  
 M.Tech Artificial Intelligence
 
 ## Disclaimer
 
-This project is intended for educational and research purposes. Speed measurements should not be considered legally certified enforcement measurements without appropriate calibrated equipment, controlled testing, and regulatory approval.
+This project is intended for educational, research, and portfolio use. Estimated speeds and detected violations should not be treated as legally valid enforcement measurements without calibrated equipment, controlled validation, and appropriate regulatory approval.
